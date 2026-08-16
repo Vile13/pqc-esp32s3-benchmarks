@@ -1,0 +1,27 @@
+# Target and flash: ESP32-S3-DevKitC-1-N8R8, 8 MB quad flash
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# Run at the rated clock. Benchmarks are reported in cycles, but a fixed and
+# stated frequency keeps wall-clock figures comparable across runs.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_PM_ENABLE=n
+
+# PSRAM: 8 MB octal, available to the application but NEVER to the crypto core.
+#
+# CAPS_ALLOC is the load-bearing setting here: plain malloc() keeps returning
+# internal SRAM, and PSRAM is only reachable through an explicit
+# heap_caps_malloc(..., MALLOC_CAP_SPIRAM). A stray allocation therefore cannot
+# silently drift into slow external memory and corrupt a measurement.
+# See docs/hardware.md.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+
+# Deterministic console for the measurement harness
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# Keep the watchdog from firing during long crypto loops
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
