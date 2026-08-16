@@ -1,0 +1,103 @@
+# Hardware
+
+## Device under test
+
+Read directly from the board with `esptool flash-id` on 2026-08-16:
+
+```
+Chip type:          ESP32-S3 (QFN56), revision v0.2
+Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240 MHz
+PSRAM:              8 MB embedded (AP_3v3)
+Flash:              8 MB, quad line (per eFuse), 3.3 V
+Crystal:            40 MHz
+MAC:                94:a9:90:dd:a8:88
+USB bridge:         Silicon Labs CP2102N  ->  /dev/cu.usbserial-1410
+```
+
+Board: Espressif ESP32-S3-DevKitC-1-N8R8.
+
+The DevKitC-1 exposes two USB-C sockets. We use the one labelled **UART**
+(the CP2102N bridge above); auto-reset over DTR/RTS works, so the board never
+has to be put into download mode by hand. The second socket is the native
+USB-JTAG peripheral and is only needed for on-chip debugging.
+
+### PSRAM is a benchmark hazard
+
+The N8R8 pairs 8 MB of quad flash with 8 MB of **octal PSRAM**. PSRAM is reached
+over a serial bus, so any buffer that lands there is served at a fraction of
+internal SRAM speed and with far less predictable timing.
+
+ML-KEM's polynomial arithmetic is dominated by temporary working buffers. If
+those are allocated in PSRAM, the benchmark measures SPI latency instead of
+cryptography.
+
+**Rule for this repository:** all cryptographic working buffers are placed in
+internal SRAM, enforced at build time, and every published measurement states
+where its buffers lived. PSRAM stays available for the application, never for
+the crypto core.
+
+## Energy measurement
+
+The INA219 is read by a **separate** board — a NodeMCU (ESP8266) — and sits in
+the supply line of the ESP32-S3.
+
+This separation is deliberate. If the device under test polled its own current
+monitor, the I2C traffic of the measurement would appear inside the measurement
+window and inflate exactly the figure being reported. The measuring instrument
+must not be the subject.
+
+On the ESP8266, I2C is on `D1` (SCL, GPIO5) and `D2` (SDA, GPIO4).
+
+## Sensors
+
+The sensor payload exists to make the handshake-versus-data ratio real rather
+than synthetic. Selection is therefore deliberate, not "everything in the box".
+
+| Part | Bus / address | Role | Status |
+|---|---|---|---|
+| SCD41 | I2C `0x62` | CO₂, temperature, humidity — the payload | v2 |
+| GY-21P (BMP280 + SHT2x) | I2C `0x76`/`0x77` + `0x40` | barometric pressure | v2 |
+| INA219 | I2C `0x40` (on the NodeMCU bus) | current and power of the DUT | v1 |
+| SSD1306 | I2C `0x3C` | live handshake timings for the demo | v3 |
+| TSL2561 | I2C `0x39` | payload-size scaling knob | later |
+| CJMCU-75 (LM75) | I2C `0x48` | — | not used |
+
+### Why the GY-21P is not redundant
+
+At first glance it duplicates the SCD41: both report temperature and humidity.
+It earns its place through the BMP280 instead. The SCD41 accepts an ambient
+pressure value (`set_ambient_pressure`), and its CO₂ reading degrades measurably
+without that compensation. The GY-21P therefore sits in the *data path* of the
+payload sensor rather than beside it.
+
+The GY-21P exists in two variants, carrying either an Si7021 or an HTU21D
+alongside the BMP280. Both answer at `0x40`. Which one is fitted here is not yet
+determined — it will be read from the device ID register during bring-up.
+
+### Why the CJMCU-75 is not used
+
+It is a temperature-only sensor, and two sensors already on the bus report
+temperature. It would add a device to the bus without adding a measurement.
+
+### I2C bus note
+
+The SCD41 breakout, the GY-21P and the SSD1306 each carry their own pull-up
+resistors. Three pairs in parallel lower the effective bus pull-up
+correspondingly. At 100 kHz this is expected to be harmless; it will be verified
+with a bus scan and signal check during bring-up rather than assumed.
+
+Note the address collision between the INA219 (`0x40`) and the GY-21P humidity
+sensor (`0x40`). They do not conflict here because they live on two different
+boards and two different buses — the INA219 belongs to the NodeMCU.
+
+## Counterpart
+
+The handshake server runs on a Raspberry Pi on the local network, not on the
+development Mac. It keeps a stable address, stays powered, and lets measurement
+series run unattended. Nothing in this project requires cloud infrastructure.
+
+## Toolchain
+
+- ESP32-S3 (device under test): **ESP-IDF v5.x**, for linker control over buffer
+  placement, stack high-water marks and cycle counters.
+- NodeMCU (measuring instrument): **Arduino IDE**, ESP8266 core.

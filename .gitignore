@@ -1,0 +1,25 @@
+# ESP-IDF
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+*.bin
+*.elf
+*.map
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Measurement artefacts (raw captures are large; committed results live in benchmarks/results/)
+benchmarks/raw/
+*.csv.gz
+
+# macOS
+.DS_Store
