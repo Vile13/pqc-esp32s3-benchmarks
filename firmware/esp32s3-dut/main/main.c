@@ -45,10 +45,15 @@ static void report_chip(void)
     printf("silicon rev    : v%d.%d\n", info.revision / 100, info.revision % 100);
     printf("cpu frequency  : %d MHz\n", CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
     printf("flash          : %" PRIu32 " MB\n", flash_bytes / (1024 * 1024));
+    /* CHIP_FEATURE_EMB_PSRAM is not set on this ESP32-S3 even though 8 MB of
+     * octal PSRAM is present and initialised, so the heap is asked instead of
+     * the feature bit. */
+    size_t psram_bytes = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     printf("features       : %s%s%s\n",
            (info.features & CHIP_FEATURE_WIFI_BGN) ? "wifi " : "",
            (info.features & CHIP_FEATURE_BLE) ? "ble " : "",
-           (info.features & CHIP_FEATURE_EMB_PSRAM) ? "psram " : "");
+           (psram_bytes > 0) ? "psram " : "");
+    printf("psram          : %u MB\n", (unsigned)(psram_bytes / (1024 * 1024)));
 }
 
 static void report_memory(void)

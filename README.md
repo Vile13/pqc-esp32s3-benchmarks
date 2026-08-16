@@ -60,6 +60,11 @@ Full wiring, addresses and rationale: [docs/hardware.md](docs/hardware.md)
 
 _pending_ — no measurement runs have been made yet.
 
+Hardware bring-up passed on 2026-08-16: the toolchain builds and runs, buffer
+placement in internal SRAM is verified on the board rather than assumed, and the
+cycle counter agrees with the configured 240 MHz clock. Details and raw output
+in [docs/bringup.md](docs/bringup.md).
+
 ## Repository layout
 
 ```
