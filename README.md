@@ -58,12 +58,17 @@ Full wiring, addresses and rationale: [docs/hardware.md](docs/hardware.md)
 
 ## Results
 
-_pending_ — no measurement runs have been made yet.
+**Benchmarks:** _pending_ — no measurement runs have been made yet.
 
-Hardware bring-up passed on 2026-08-16: the toolchain builds and runs, buffer
-placement in internal SRAM is verified on the board rather than assumed, and the
-cycle counter agrees with the configured 240 MHz clock. Details and raw output
-in [docs/bringup.md](docs/bringup.md).
+**Correctness:** ML-KEM-512 and ML-KEM-768 pass all 120 NIST ACVP vectors on the
+device (key generation, encapsulation, decapsulation). The vectors come from
+NIST's ACVP-Server, not from the library under test, so passing them is evidence
+rather than a tautology. Details, coverage gaps and provenance in
+[docs/conformance.md](docs/conformance.md).
+
+**Bring-up:** toolchain builds and runs, buffer placement in internal SRAM is
+verified on the board rather than assumed, and the cycle counter agrees with the
+configured 240 MHz clock — [docs/bringup.md](docs/bringup.md).
 
 ## Repository layout
 

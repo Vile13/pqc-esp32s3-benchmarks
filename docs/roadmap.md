@@ -14,7 +14,7 @@ Two rules shape the order of work:
 Goal: an ESP32-S3 establishes a post-quantum session key with a Raspberry Pi and
 sends authenticated, encrypted data over it.
 
-### v1.0 — ML-KEM, verified
+### v1.0 — ML-KEM, verified ✅ done (2026-08-17)
 
 - mlkem-native integrated as an ESP-IDF component, ML-KEM-512 and ML-KEM-768
 - Working buffers pinned to internal SRAM, enforced at build time and asserted at
@@ -30,6 +30,12 @@ unnoticed. Interoperability proves two implementations agree; only KATs prove
 they agree with FIPS 203.
 
 **Done when:** KATs pass for both parameter sets on the board itself.
+
+Result: 120 of 120 ACVP vectors pass on the device — see
+[conformance.md](conformance.md). The `encapsulationKeyCheck` and
+`decapsulationKeyCheck` groups are still outstanding and are due before v1.1,
+since they cover the input validation that matters once keys arrive over the
+network.
 
 ### v1.1 — the handshake
 
