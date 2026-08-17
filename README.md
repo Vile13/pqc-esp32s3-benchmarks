@@ -60,10 +60,11 @@ Full wiring, addresses and rationale: [docs/hardware.md](docs/hardware.md)
 
 **Benchmarks:** _pending_ — no measurement runs have been made yet.
 
-**Correctness:** ML-KEM-512 and ML-KEM-768 pass all 120 NIST ACVP vectors on the
-device (key generation, encapsulation, decapsulation). The vectors come from
+**Correctness:** ML-KEM-512 and ML-KEM-768 pass all 160 NIST ACVP vectors on the
+device — every group defined for these parameter sets, including the FIPS 203
+§7.2 key validity checks. The vectors come from
 NIST's ACVP-Server, not from the library under test, so passing them is evidence
-rather than a tautology. Details, coverage gaps and provenance in
+rather than a tautology. Details, scope and provenance in
 [docs/conformance.md](docs/conformance.md).
 
 **Bring-up:** toolchain builds and runs, buffer placement in internal SRAM is

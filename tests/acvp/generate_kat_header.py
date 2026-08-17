@@ -51,6 +51,14 @@ def load_pair(acvp_dir: Path, name: str):
     return prompt, by_tc
 
 
+def c_flags(name: str, flags: list[bool]) -> str:
+    """Emit the expected verdicts for a key-check group as 0/1."""
+    if not flags:
+        return ""
+    body = "".join(f"{int(f)}," for f in flags)
+    return f"static const uint8_t {name}[{len(flags)}] = {{{body}}};\n"
+
+
 def c_array(name: str, rows: list[bytes]) -> str:
     """Emit a 2D uint8_t array. Empty input yields nothing."""
     if not rows:
@@ -116,8 +124,26 @@ def collect(acvp_dir: Path, limit: int | None):
                 }
                 for t in tests
             ]
-        # decapsulationKeyCheck / encapsulationKeyCheck are not run yet; they
-        # exercise the FIPS 203 section 7.2 input checks and are a later addition.
+        elif function == "encapsulationKeyCheck":
+            # FIPS 203 section 7.2: a public key whose coefficients are not
+            # canonically reduced must be rejected. Half of each group is valid,
+            # half is not - a check that always says "invalid" scores 50%.
+            data[lvl]["ek_check"] = [
+                {
+                    "key": bytes.fromhex(t["ek"]),
+                    "valid": bool(expected[t["tcId"]]["testPassed"]),
+                }
+                for t in tests
+            ]
+        elif function == "decapsulationKeyCheck":
+            # Rejects a private key whose embedded public-key hash does not match.
+            data[lvl]["dk_check"] = [
+                {
+                    "key": bytes.fromhex(t["dk"]),
+                    "valid": bool(expected[t["tcId"]]["testPassed"]),
+                }
+                for t in tests
+            ]
 
     return data
 
@@ -192,6 +218,15 @@ def main() -> int:
             lines.append(f"#define KAT{lvl}_DECAP_COUNT {len(rows)}")
             for field in ("dk", "c", "k"):
                 lines.append(c_array(f"kat{lvl}_decap_{field}", [r[field] for r in rows]))
+
+        for tag, key in (("EKCHECK", "ek_check"), ("DKCHECK", "dk_check")):
+            if key not in groups:
+                continue
+            rows = groups[key]
+            prefix = f"kat{lvl}_{key.replace('_', '')}"
+            lines.append(f"#define KAT{lvl}_{tag}_COUNT {len(rows)}")
+            lines.append(c_array(f"{prefix}_key", [r["key"] for r in rows]))
+            lines.append(c_flags(f"{prefix}_valid", [r["valid"] for r in rows]))
 
     lines += ["#endif /* ACVP_VECTORS_H */", ""]
 

@@ -6,13 +6,20 @@
  * are produced by NIST, independently of mlkem-native, so passing them is
  * evidence rather than a tautology - see tests/acvp/generate_kat_header.py.
  *
- * Three groups are run per parameter set:
+ * Five groups are run per parameter set:
  *
  *   keyGen  (AFT) - derive (ek, dk) from the seeds d and z, compare both.
  *   encap   (AFT) - encapsulate to a given ek with a given m, compare
  *                   ciphertext and shared secret.
  *   decap   (VAL) - decapsulate a given ciphertext with a given dk, compare
  *                   the shared secret.
+ *   ekCheck (VAL) - accept or reject a public key, per FIPS 203 section 7.2.
+ *   dkCheck (VAL) - accept or reject a private key.
+ *
+ * The two check groups are the ones that matter once keys arrive over a network
+ * rather than out of a header: they decide whether a malformed key is rejected
+ * or quietly processed. Each group is half valid and half malformed, so a check
+ * that blindly answers "invalid" - or "valid" - scores 50% and fails.
  *
  * ACVP supplies d and z separately; mlkem-native takes a single 64-byte coins
  * buffer that is d || z. Verified against mlkem/src/kem.c, where the second
@@ -108,6 +115,38 @@ static void report(const char *label, int level, kat_result_t r)
             }                                                                  \
         }                                                                      \
         return r;                                                              \
+    }                                                                          \
+                                                                               \
+    static kat_result_t kat_ekcheck_##LVL(void)                                \
+    {                                                                          \
+        kat_result_t r = {KAT##LVL##_EKCHECK_COUNT, 0};                        \
+                                                                               \
+        for (int i = 0; i < KAT##LVL##_EKCHECK_COUNT; i++)                     \
+        {                                                                      \
+            bool accepted =                                                    \
+                (mlkem##LVL##_check_pk(kat##LVL##_ekcheck_key[i]) == 0);       \
+            if (accepted != (kat##LVL##_ekcheck_valid[i] != 0))                \
+            {                                                                  \
+                r.failed++;                                                    \
+            }                                                                  \
+        }                                                                      \
+        return r;                                                              \
+    }                                                                          \
+                                                                               \
+    static kat_result_t kat_dkcheck_##LVL(void)                                \
+    {                                                                          \
+        kat_result_t r = {KAT##LVL##_DKCHECK_COUNT, 0};                        \
+                                                                               \
+        for (int i = 0; i < KAT##LVL##_DKCHECK_COUNT; i++)                     \
+        {                                                                      \
+            bool accepted =                                                    \
+                (mlkem##LVL##_check_sk(kat##LVL##_dkcheck_key[i]) == 0);       \
+            if (accepted != (kat##LVL##_dkcheck_valid[i] != 0))                \
+            {                                                                  \
+                r.failed++;                                                    \
+            }                                                                  \
+        }                                                                      \
+        return r;                                                              \
     }
 
 DEFINE_KAT_LEVEL(512)
@@ -126,9 +165,16 @@ bool mlkem_kat_run(void)
         const char *label;
         kat_result_t (*fn)(void);
     } cases[] = {
-        {512, "keyGen", kat_keygen_512}, {512, "encap", kat_encap_512},
-        {512, "decap", kat_decap_512},   {768, "keyGen", kat_keygen_768},
-        {768, "encap", kat_encap_768},   {768, "decap", kat_decap_768},
+        {512, "keyGen", kat_keygen_512},
+        {512, "encap", kat_encap_512},
+        {512, "decap", kat_decap_512},
+        {512, "ekCheck", kat_ekcheck_512},
+        {512, "dkCheck", kat_dkcheck_512},
+        {768, "keyGen", kat_keygen_768},
+        {768, "encap", kat_encap_768},
+        {768, "decap", kat_decap_768},
+        {768, "ekCheck", kat_ekcheck_768},
+        {768, "dkCheck", kat_dkcheck_768},
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)

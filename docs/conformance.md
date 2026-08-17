@@ -26,10 +26,14 @@ own ACVP-Server repository.
 ok    ML-KEM-512 keyGen  25/25 vectors
 ok    ML-KEM-512 encap   25/25 vectors
 ok    ML-KEM-512 decap   10/10 vectors
+ok    ML-KEM-512 ekCheck 10/10 vectors
+ok    ML-KEM-512 dkCheck 10/10 vectors
 ok    ML-KEM-768 keyGen  25/25 vectors
 ok    ML-KEM-768 encap   25/25 vectors
 ok    ML-KEM-768 decap   10/10 vectors
-ok    120 of 120 ACVP vectors
+ok    ML-KEM-768 ekCheck 10/10 vectors
+ok    ML-KEM-768 dkCheck 10/10 vectors
+ok    160 of 160 ACVP vectors
 ```
 
 Alongside them, a consistency self-test that the ACVP vectors do not cover:
@@ -53,14 +57,20 @@ a naive round-trip test and fail this one.
 | `keyGen` (AFT) | 25 per level | run |
 | `encapsulation` (AFT) | 25 per level | run |
 | `decapsulation` (VAL) | 10 per level | run |
-| `encapsulationKeyCheck` (VAL) | 10 per level | **not run yet** |
-| `decapsulationKeyCheck` (VAL) | 10 per level | **not run yet** |
+| `encapsulationKeyCheck` (VAL) | 10 per level | run |
+| `decapsulationKeyCheck` (VAL) | 10 per level | run |
 
-The two key-check groups exercise the input validation from FIPS 203 §7.2 —
-whether a malformed public or private key is rejected rather than processed.
-They matter once the Pi starts sending keys over the network, so they are due
-before v1.1. Until then this page claims conformance for key generation,
-encapsulation and decapsulation only.
+Every ACVP group defined for ML-KEM-512 and ML-KEM-768 is executed.
+
+The two key-check groups are the ones that stop being academic the moment a key
+arrives over a network instead of out of a header. They cover the input
+validation from FIPS 203 §7.2: a public key whose coefficients are not
+canonically reduced, or a private key whose embedded public-key hash does not
+match, must be rejected rather than quietly processed.
+
+Each group is half valid and half malformed keys. That matters: an
+implementation that always answers "invalid" scores 50%, and so does one that
+always answers "valid". Only a check that actually discriminates passes.
 
 ML-KEM-1024 is out of scope; see [roadmap.md](roadmap.md).
 
@@ -71,6 +81,9 @@ tag `v1.1.0.43`, files under `gen-val/json-files/`:
 
 - `ML-KEM-keyGen-FIPS203/{prompt,expectedResults}.json`
 - `ML-KEM-encapDecap-FIPS203/{prompt,expectedResults}.json`
+
+The encapDecap file supplies the encapsulation, decapsulation and both key-check
+groups.
 
 The SHA-256 of each input file is recorded in the header of the generated
 `firmware/esp32s3-dut/main/acvp_vectors.h`, so the committed test data can be
@@ -96,7 +109,7 @@ Measured from the linked binary as features were added:
 |---|---|---|
 | Bring-up, no cryptography | 201,584 | — |
 | + ML-KEM-512 and ML-KEM-768 | 217,616 | +16,032 |
-| + 120 ACVP vectors | 531,344 | +313,728 (test data) |
+| + 160 ACVP vectors | 591,984 | +374,368 (test data) |
 
 The +16,032 bytes cover both parameter sets including the shared Keccak code.
 The test vectors are `.rodata` and belong to the verification build only; they

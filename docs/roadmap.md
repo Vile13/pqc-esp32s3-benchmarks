@@ -31,11 +31,10 @@ they agree with FIPS 203.
 
 **Done when:** KATs pass for both parameter sets on the board itself.
 
-Result: 120 of 120 ACVP vectors pass on the device — see
-[conformance.md](conformance.md). The `encapsulationKeyCheck` and
-`decapsulationKeyCheck` groups are still outstanding and are due before v1.1,
-since they cover the input validation that matters once keys arrive over the
-network.
+Result: 160 of 160 ACVP vectors pass on the device, covering every group
+defined for these two parameter sets — including the FIPS 203 §7.2 key validity
+checks that decide whether a malformed key arriving over the network is rejected
+or quietly processed. See [conformance.md](conformance.md).
 
 ### v1.1 — the handshake
 
