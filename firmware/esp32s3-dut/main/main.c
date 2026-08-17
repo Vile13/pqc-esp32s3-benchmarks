@@ -1,16 +1,19 @@
 /*
- * Bring-up check for the device under test.
+ * Bring-up and correctness firmware for the device under test.
  *
- * This firmware contains no cryptography on purpose. Before any ML-KEM number
- * is worth reporting, three things have to be established on the real board:
+ * No benchmark numbers are produced here. This build establishes, on the real
+ * board, the things that every later measurement depends on:
  *
  *   1. the toolchain produces a binary that runs,
  *   2. memory placement is controllable - crypto buffers land in internal SRAM
  *      and stay there (see docs/hardware.md),
  *   3. the cycle counter agrees with the configured clock, so that later
- *      measurements can be reported in cycles rather than guessed.
+ *      measurements can be reported in cycles rather than guessed,
+ *   4. ML-KEM-512 and ML-KEM-768 match the NIST ACVP vectors on this hardware.
  *
- * If any of these fails, every subsequent benchmark is meaningless.
+ * If any of these fails, every subsequent benchmark is meaningless. Point 4 in
+ * particular: a fast number from a wrong implementation is worth less than no
+ * number at all.
  */
 
 #include <inttypes.h>
@@ -26,6 +29,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "mlkem_kat.h"
 #include "mlkem_selftest.h"
 
 /* Roughly the largest working buffer an ML-KEM-768 operation is expected to
@@ -165,12 +169,15 @@ void app_main(void)
     bool placement_ok = verify_buffer_placement();
     bool counter_ok = verify_cycle_counter();
     bool selftest_ok = mlkem_selftest_run();
+    bool kat_ok = mlkem_kat_run();
 
     printf("\n=== bring-up result ===\n");
     printf("buffer placement : %s\n", placement_ok ? "PASS" : "FAIL");
     printf("cycle counter    : %s\n", counter_ok ? "PASS" : "FAIL");
     printf("mlkem self-test  : %s\n", selftest_ok ? "PASS" : "FAIL");
+    printf("mlkem ACVP KATs  : %s\n", kat_ok ? "PASS" : "FAIL");
     printf("overall          : %s\n",
-           (placement_ok && counter_ok && selftest_ok) ? "PASS" : "FAIL");
-    printf("\nconsistency only - ACVP conformance vectors still outstanding\n");
+           (placement_ok && counter_ok && selftest_ok && kat_ok) ? "PASS"
+                                                                        : "FAIL");
+    printf("\nML-KEM verified against NIST ACVP vectors on this device\n");
 }

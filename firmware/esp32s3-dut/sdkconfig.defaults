@@ -19,6 +19,15 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 
+# ML-KEM needs far more stack than the 3584-byte default. An ML-KEM-768 secret
+# key alone is 2400 bytes, and the polynomial arithmetic adds several KB of
+# temporaries on top. The default silently overflows.
+#
+# This is generous on purpose: it is the correctness build. Peak stack is a
+# measured quantity in v2 (via high-water marks), not something to guess at by
+# tuning this number down until it stops crashing.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+
 # Deterministic console for the measurement harness
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200

@@ -23,3 +23,6 @@ benchmarks/raw/
 
 # macOS
 .DS_Store
+
+# ACVP source vectors are fetched, not committed; the generated header is.
+tests/acvp/.acvp-data/

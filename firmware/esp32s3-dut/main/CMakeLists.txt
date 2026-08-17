@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
         "mlkem_selftest.c"
+        "mlkem_kat.c"
     INCLUDE_DIRS "."
     REQUIRES
         mlkem
