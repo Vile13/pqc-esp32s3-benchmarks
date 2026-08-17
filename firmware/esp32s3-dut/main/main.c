@@ -26,6 +26,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "mlkem_selftest.h"
+
 /* Roughly the largest working buffer an ML-KEM-768 operation is expected to
  * need. Used here only to prove the allocation lands where we claim it does. */
 #define CRYPTO_SCRATCH_BYTES 8192
@@ -162,11 +164,13 @@ void app_main(void)
 
     bool placement_ok = verify_buffer_placement();
     bool counter_ok = verify_cycle_counter();
+    bool selftest_ok = mlkem_selftest_run();
 
     printf("\n=== bring-up result ===\n");
     printf("buffer placement : %s\n", placement_ok ? "PASS" : "FAIL");
     printf("cycle counter    : %s\n", counter_ok ? "PASS" : "FAIL");
+    printf("mlkem self-test  : %s\n", selftest_ok ? "PASS" : "FAIL");
     printf("overall          : %s\n",
-           (placement_ok && counter_ok) ? "PASS" : "FAIL");
-    printf("\nno cryptography in this build - bring-up only\n");
+           (placement_ok && counter_ok && selftest_ok) ? "PASS" : "FAIL");
+    printf("\nconsistency only - ACVP conformance vectors still outstanding\n");
 }
