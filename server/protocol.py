@@ -21,10 +21,14 @@ VERSION = 0x01
 
 SUITE_MLKEM768 = 0x01
 SUITE_MLKEM512 = 0x02
+SUITE_MLKEM768_FS = 0x11
+SUITE_MLKEM512_FS = 0x12
 
 SUITE_PARAMS = {
-    SUITE_MLKEM768: {"level": 768, "ct": 1088, "ek": 1184},
-    SUITE_MLKEM512: {"level": 512, "ct": 768, "ek": 800},
+    SUITE_MLKEM768: {"level": 768, "ct": 1088, "ek": 1184, "fs": False},
+    SUITE_MLKEM512: {"level": 512, "ct": 768, "ek": 800, "fs": False},
+    SUITE_MLKEM768_FS: {"level": 768, "ct": 1088, "ek": 1184, "fs": True},
+    SUITE_MLKEM512_FS: {"level": 512, "ct": 768, "ek": 800, "fs": True},
 }
 
 FRAME_CLIENT_HELLO = 0x01
@@ -37,6 +41,12 @@ MAX_FRAME = 4096
 
 # ServerHello is fixed-length in mode A: nonce + session id + MAC.
 SERVER_HELLO_LEN = 32 + 8 + 32
+
+
+def server_hello_len(suite: int) -> int:
+    """Mode B's ServerHello additionally carries the ephemeral public key."""
+    params = SUITE_PARAMS[suite]
+    return SERVER_HELLO_LEN + (params["ek"] if params["fs"] else 0)
 
 NONCE_LEN = 32
 SESSION_ID_LEN = 8
@@ -135,8 +145,50 @@ def derive_keys(ss: bytes, psk: bytes, client_nonce: bytes, server_nonce: bytes,
     )
 
 
-def transcript_2(client_hello: bytes, server_nonce: bytes, session_id: bytes) -> bytes:
-    return hashlib.sha256(client_hello + server_nonce + session_id).digest()
+def transcript_2(client_hello: bytes, server_nonce: bytes, session_id: bytes,
+                 ek_eph: bytes = b"") -> bytes:
+    """
+    In mode B the ephemeral public key is part of TH2, so the server's
+    confirmation MAC binds it. Without that binding a man in the middle could
+    substitute its own ephemeral key and forward secrecy would protect nothing.
+    """
+    return hashlib.sha256(
+        client_hello + server_nonce + session_id + ek_eph
+    ).digest()
+
+
+def transcript_3(th2: bytes, ct_eph: bytes) -> bytes:
+    return hashlib.sha256(th2 + ct_eph).digest()
+
+
+def derive_stage1(ss_static: bytes, psk: bytes, client_nonce: bytes,
+                  server_nonce: bytes, th2: bytes) -> bytes:
+    """
+    Mode B, stage 1: the only key derivable before the ephemeral exchange.
+
+    The server must authenticate ek_E in ServerHello, but ss_eph does not exist
+    until the client has encapsulated to ek_E in the message after. So the
+    confirmation key comes from ss_static and the PSK alone.
+    """
+    prk = hkdf_extract(client_nonce + server_nonce, ss_static + psk)
+    return hkdf_expand(prk, LABEL_SRV_CONFIRM + th2, 32)
+
+
+def derive_stage2(ss_static: bytes, ss_eph: bytes, psk: bytes,
+                  client_nonce: bytes, server_nonce: bytes,
+                  th3: bytes) -> SessionKeys:
+    """
+    Mode B, stage 2: every key that protects data, all of them derived from
+    ss_eph. Once dk_E is destroyed those keys cannot be reconstructed, even by
+    someone who later obtains the server's long-term key.
+    """
+    prk = hkdf_extract(client_nonce + server_nonce, ss_static + ss_eph + psk)
+    return SessionKeys(
+        srv_confirm=b"",  # stage 1 produced it; not reused here
+        cli_confirm=hkdf_expand(prk, LABEL_CLI_CONFIRM + th3, 32),
+        c2s=hkdf_expand(prk, LABEL_C2S + th3, 32),
+        s2c=hkdf_expand(prk, LABEL_S2C + th3, 32),
+    )
 
 
 def hello_mac(psk: bytes, hello_without_mac: bytes) -> bytes:

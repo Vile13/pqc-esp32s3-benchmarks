@@ -82,10 +82,6 @@ firmware produced precisely that. The ratio arguments in
 
 ## What this does not show
 
-- **No forward secrecy.** This is mode A: the server's ML-KEM key is long-lived
-  and pinned. An adversary who records these sessions and later obtains the
-  server's private key can decrypt all of them retroactively. Mode B is specified
-  and not yet implemented.
 - **Nothing about energy.** The question this project exists to answer is what a
   rekey costs in millijoules, and that needs the INA219 harness from v2.
 - **No side-channel claims**, here or anywhere else in this project.
@@ -114,9 +110,23 @@ board for each case, and reads the verdict off the serial line:
   ok    bad-length  unexpected frame 0x02 of 71 bytes
   ok    truncate    no ServerHello - no answer or connection closed
   ok    silence     no ServerHello - no answer or connection closed
+  ok    bad-ek      ephemeral key rejected or encapsulation failed
+  ok    swap-ek     server MAC mismatch - this is not the pinned server
 
-7/7 rejection paths hold
+9/9 rejection paths hold
 ```
+
+The last two exist only because of mode B, and they check different defences.
+`bad-ek` sends a *correctly authenticated* ServerHello carrying an ephemeral key
+whose coefficients lie outside [0, q-1]. The MAC is valid, so the MAC cannot catch
+it — only the FIPS 203 §7.2 input check can, and it does. That is the
+`encapsulationKeyCheck` ACVP group earning its place: academic in mode A, load
+bearing the moment a key arrives over the wire.
+
+`swap-ek` computes the MAC over one ephemeral key and puts a different one on the
+wire. TH2 covers `ek_E`, so the substitution shows up as a MAC mismatch. Without
+that binding, forward secrecy would protect nothing: a man in the middle would
+simply supply its own ephemeral key.
 
 The `impostor` case is the one that matters most: a man in the middle holding its
 own ML-KEM key pair, answering in the pinned server's place. It cannot
@@ -136,3 +146,34 @@ The server cached the device table at startup. Registering a device while the
 server was running had no effect: the server reported `unknown device` for an id
 that was plainly present in `devices.json`. It now re-reads the file whenever its
 modification time changes.
+
+## Mode B: what forward secrecy costs
+
+Both modes now run back to back on the same board in the same conditions, so the
+delta is measured rather than inferred.
+
+| | Mode A | Mode B | Delta |
+|---|---|---|---|
+| Handshake, device wall clock | 98 ms | 298 ms | +200 ms |
+| Encapsulation to the static key | 7920 µs | 7734 µs | — |
+| Encapsulation to the ephemeral key | — | 7263 µs | +7263 µs |
+| Bytes on the wire | 1279 | 3551 | +2272 |
+| Handshake, server wall clock | 100.8 ms | 245.3 ms | +144.5 ms |
+| of which ephemeral key generation | — | 67.1 ms | +67.1 ms |
+
+**The device's own extra cryptography is 7.3 ms of a 200 ms difference.** Forward
+secrecy is cheap in compute on the ESP32-S3 — a second encapsulation costs about
+as much as the first. Almost everything else is the server generating a key pair
+per session (67 ms on a Pi 3, and that figure includes an OpenSSL process launch)
+plus 2272 more bytes and another round trip.
+
+That is worth stating carefully, because the naive expectation is the opposite:
+that forward secrecy would be the expensive thing on the constrained device. It
+is not. On this hardware the constraint is the radio and the peer, not the
+lattice arithmetic.
+
+It also means the energy question from the README is not answered by these
+numbers. Wall clock with the radio up and a Python server on the other end is not
+millijoules, and the 200 ms delta is dominated by things that draw very different
+amounts of current — a busy radio, an idle wait, a remote CPU. Measuring it
+properly is v2.

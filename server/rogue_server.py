@@ -21,6 +21,13 @@ Modes:
     truncate     announces 72 bytes, sends 30, closes
     silence      accepts the connection and never answers
     replay       replays a ServerHello recorded from an earlier session
+    bad-ek       mode B: a correctly MACed ServerHello carrying a MALFORMED
+                 ephemeral public key (coefficients outside [0,q-1]). The MAC is
+                 valid, so only the FIPS 203 section 7.2 input check can catch
+                 it. This is the attack mode B introduces and mode A does not
+                 have: ek_E is the first key material that arrives over the wire.
+    swap-ek      mode B: valid ek_E in the transcript, a different one on the
+                 wire - the substitution the server MAC exists to prevent
 
 Every one of these must end with the firmware refusing to send data.
 """
@@ -45,6 +52,11 @@ import protocol as p
 log = logging.getLogger("rogue")
 
 REPLAY_STORE = Path.home() / "pqc-server/.replay_capture.bin"
+
+# These modes only make sense against a mode B handshake. The firmware runs mode
+# A first, so those connections are served correctly and only the mode B one is
+# attacked.
+FS_ONLY_MODES = {"bad-ek", "swap-ek"}
 
 
 def decapsulate(pem: Path, ciphertext: bytes) -> bytes | None:
@@ -72,14 +84,39 @@ def make_impostor_key() -> Path:
     return path
 
 
-def build_valid_server_hello(hello_raw: bytes, ss: bytes, psk: bytes):
+def make_ephemeral() -> tuple[bytes, Path]:
+    d = Path(tempfile.mkdtemp())
+    pem = d / "eph.pem"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "ML-KEM-768",
+                    "-out", str(pem)], capture_output=True, check=True)
+    der = subprocess.run(["openssl", "pkey", "-in", str(pem), "-pubout",
+                          "-outform", "DER"],
+                         capture_output=True, check=True).stdout
+    return der[-1184:], pem
+
+
+def build_valid_server_hello(hello_raw: bytes, ss: bytes, psk: bytes,
+                             ek_eph: bytes = b"", ek_on_wire: bytes | None = None):
+    """
+    Builds a ServerHello whose MAC is computed over `ek_eph` but which carries
+    `ek_on_wire` (defaulting to the same). Passing a different one produces the
+    substitution attack the MAC is supposed to make impossible.
+    """
     server_nonce = secrets.token_bytes(p.NONCE_LEN)
     session_id = secrets.token_bytes(p.SESSION_ID_LEN)
-    th2 = p.transcript_2(hello_raw, server_nonce, session_id)
-    keys = p.derive_keys(ss, psk, p.ClientHello.parse(hello_raw).client_nonce,
-                         server_nonce, th2)
-    mac = hmac.new(keys.srv_confirm, th2, "sha256").digest()
-    return p.build_server_hello(server_nonce, session_id, mac)
+    hello = p.ClientHello.parse(hello_raw)
+    th2 = p.transcript_2(hello_raw, server_nonce, session_id, ek_eph)
+
+    if p.SUITE_PARAMS[hello.suite]["fs"]:
+        srv_confirm = p.derive_stage1(ss, psk, hello.client_nonce, server_nonce,
+                                      th2)
+    else:
+        srv_confirm = p.derive_keys(ss, psk, hello.client_nonce, server_nonce,
+                                    th2).srv_confirm
+
+    mac = hmac.new(srv_confirm, th2, "sha256").digest()
+    carried = ek_eph if ek_on_wire is None else ek_on_wire
+    return server_nonce + session_id + carried + mac
 
 
 def handle(conn: socket.socket, mode: str, key: Path, psk: bytes) -> str:
@@ -90,6 +127,39 @@ def handle(conn: socket.socket, mode: str, key: Path, psk: bytes) -> str:
     hello = p.ClientHello.parse(payload)
     log.info("ClientHello from device %s (%d bytes)", hello.device_id.hex(),
              len(payload))
+
+    fs = p.SUITE_PARAMS[hello.suite]["fs"]
+
+    if mode in FS_ONLY_MODES and not fs:
+        # Serve the mode A handshake honestly; the attack targets mode B.
+        ss = decapsulate(key, hello.kem_ct)
+        p.write_frame(conn, p.FRAME_SERVER_HELLO,
+                      build_valid_server_hello(payload, ss, psk))
+        # Let the client finish so its mode B attempt follows.
+        try:
+            p.read_frame(conn)
+        except Exception:
+            pass
+        return "served the mode A handshake correctly (attack targets mode B)"
+
+    if mode == "bad-ek":
+        ss = decapsulate(key, hello.kem_ct)
+        ek_eph, _ = make_ephemeral()
+        # Push coefficients out of range. ML-KEM packs 12-bit coefficients, so
+        # all-ones bytes give values well above q-1 = 3328.
+        malformed = b"\xff" * 8 + ek_eph[8:]
+        p.write_frame(conn, p.FRAME_SERVER_HELLO,
+                      build_valid_server_hello(payload, ss, psk, malformed))
+        return "sent a correctly MACed ServerHello with a malformed ek_E"
+
+    if mode == "swap-ek":
+        ss = decapsulate(key, hello.kem_ct)
+        signed_ek, _ = make_ephemeral()
+        other_ek, _ = make_ephemeral()
+        p.write_frame(conn, p.FRAME_SERVER_HELLO,
+                      build_valid_server_hello(payload, ss, psk, signed_ek,
+                                               ek_on_wire=other_ek))
+        return "MACed one ek_E and sent a different one"
 
     if mode == "silence":
         time.sleep(30)
@@ -146,7 +216,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", required=True,
                     choices=["wrong-mac", "impostor", "bad-type", "bad-length",
-                             "truncate", "silence", "replay"])
+                             "truncate", "silence", "replay", "bad-ek",
+                             "swap-ek"])
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8443)
     ap.add_argument("--key", type=Path,

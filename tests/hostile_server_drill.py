@@ -29,14 +29,19 @@ from pathlib import Path
 
 import serial
 
+# (mode, description, connections needed)
+# The mode B attacks need two connections: the firmware runs mode A first, and
+# that handshake is served honestly so the mode B attempt follows.
 MODES = [
-    ("wrong-mac", "ServerHello with one MAC bit flipped"),
-    ("impostor", "man in the middle with an unpinned ML-KEM key"),
-    ("replay", "ServerHello recorded from an earlier session"),
-    ("bad-type", "unknown frame type instead of ServerHello"),
-    ("bad-length", "ServerHello one byte short"),
-    ("truncate", "announced 72 bytes, sent 30, closed"),
-    ("silence", "accepted the connection and never answered"),
+    ("wrong-mac", "ServerHello with one MAC bit flipped", 1),
+    ("impostor", "man in the middle with an unpinned ML-KEM key", 1),
+    ("replay", "ServerHello recorded from an earlier session", 1),
+    ("bad-type", "unknown frame type instead of ServerHello", 1),
+    ("bad-length", "ServerHello one byte short", 1),
+    ("truncate", "announced 72 bytes, sent 30, closed", 1),
+    ("silence", "accepted the connection and never answered", 1),
+    ("bad-ek", "mode B: malformed ephemeral key, MAC valid", 2),
+    ("swap-ek", "mode B: MACed one ephemeral key, sent another", 2),
 ]
 
 REMOTE_DIR = "~/pqc-server"
@@ -56,9 +61,9 @@ def stop_servers(host: str, key: Path) -> None:
     ssh(host, key, 'pkill -f "[p]qc_server.py"; pkill -f "[r]ogue_server.py"; sleep 1')
 
 
-def start_rogue(host: str, key: Path, mode: str) -> None:
+def start_rogue(host: str, key: Path, mode: str, connections: int = 1) -> None:
     cmd = (f"cd {REMOTE_DIR} && setsid python3 -u rogue_server.py --mode {mode} "
-           f"--connections 1 </dev/null >rogue.log 2>&1 &")
+           f"--connections {connections} </dev/null >rogue.log 2>&1 &")
     try:
         subprocess.run(
             ["ssh", "-o", "BatchMode=yes", "-i", str(key), host, cmd],
@@ -102,9 +107,14 @@ def reset_and_capture(port: str, seconds: float) -> str:
     return buf.decode("utf-8", "replace")
 
 
-def evaluate(output: str) -> tuple[bool, str]:
+def evaluate(output: str, fs_only: bool = False) -> tuple[bool, str]:
     """A pass means the firmware refused. Silence is not a pass."""
-    if "session completed" in output:
+    if fs_only:
+        # Mode A is served honestly in these runs, so the verdict line reports a
+        # per-mode result. Mode B must be the one that failed.
+        if "mode B FAILED" not in output:
+            return False, "firmware ACCEPTED the mode B handshake"
+    elif "session completed" in output:
         return False, "firmware COMPLETED the session"
     if "session failed" not in output:
         return False, "no verdict on the serial line (hang or crash?)"
@@ -136,7 +146,7 @@ def main() -> int:
     print(f"board on {port}, rogue server on {args.pi}\n")
 
     results = []
-    for mode, description in MODES:
+    for mode, description, connections in MODES:
         if mode == "replay":
             # The replay mode needs a ServerHello to replay. Its first
             # connection serves correctly and records one; only the second
@@ -144,14 +154,14 @@ def main() -> int:
             # round as a result - that round is supposed to succeed.
             ssh(args.pi, args.key, f"rm -f {REMOTE_DIR}/.replay_capture.bin")
             stop_servers(args.pi, args.key)
-            start_rogue(args.pi, args.key, mode)
+            start_rogue(args.pi, args.key, mode, connections)
             reset_and_capture(port, args.capture_seconds)
 
         stop_servers(args.pi, args.key)
-        start_rogue(args.pi, args.key, mode)
+        start_rogue(args.pi, args.key, mode, connections)
 
         output = reset_and_capture(port, args.capture_seconds)
-        ok, detail = evaluate(output)
+        ok, detail = evaluate(output, fs_only=(connections == 2))
         results.append((mode, ok))
 
         mark = "ok  " if ok else "FAIL"

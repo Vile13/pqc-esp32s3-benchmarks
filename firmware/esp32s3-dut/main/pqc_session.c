@@ -32,7 +32,8 @@
 static const char *TAG = "pqc";
 
 #define PROTOCOL_VERSION 0x01
-#define SUITE_MLKEM768 0x01
+#define SUITE_MLKEM768 0x01    /* mode A: pinned static key, no forward secrecy */
+#define SUITE_MLKEM768_FS 0x11 /* mode B: ephemeral key per session */
 
 #define FRAME_CLIENT_HELLO 0x01
 #define FRAME_SERVER_HELLO 0x02
@@ -53,6 +54,9 @@ static const char *TAG = "pqc";
     (2 + DEVICE_ID_LEN + KEY_ID_LEN + NONCE_LEN + MLKEM768_CIPHERTEXTBYTES     \
      + MAC_LEN)
 #define SERVER_HELLO_LEN (NONCE_LEN + SESSION_ID_LEN + MAC_LEN)
+/* Mode B's ServerHello additionally carries the ephemeral public key. */
+#define SERVER_HELLO_LEN_FS (SERVER_HELLO_LEN + MLKEM768_PUBLICKEYBYTES)
+#define CLIENT_KEY_EXCHANGE_LEN (MLKEM768_CIPHERTEXTBYTES + MAC_LEN)
 
 static const char LABEL_HELLO[] = "PQC-IoT-1 hello";
 static const char LABEL_SRV_CONFIRM[] = "PQC-IoT-1 server confirm";
@@ -211,10 +215,12 @@ static int connect_to_server(const char *host, uint16_t port)
 /* Large buffers are static: the handshake needs ~2.4 KB of message alone, and
  * .bss is internal SRAM, so the placement rule from docs/hardware.md holds. */
 static uint8_t s_hello[CLIENT_HELLO_LEN];
-static uint8_t s_frame[512];
+static uint8_t s_frame[SERVER_HELLO_LEN_FS];      /* 1256 in mode B */
+static uint8_t s_out[CLIENT_KEY_EXCHANGE_LEN];    /* 1120 in mode B */
 
-static bool handshake(int sock, pqc_session_t *session)
+static bool handshake(int sock, pqc_session_t *session, uint8_t suite)
 {
+    const bool fs = (suite == SUITE_MLKEM768_FS);
     uint8_t client_nonce[NONCE_LEN];
     uint8_t kem_ct[MLKEM768_CIPHERTEXTBYTES];
     uint8_t ss[SS_LEN];
@@ -231,7 +237,7 @@ static bool handshake(int sock, pqc_session_t *session)
 
     size_t i = 0;
     s_hello[i++] = PROTOCOL_VERSION;
-    s_hello[i++] = SUITE_MLKEM768;
+    s_hello[i++] = suite;
     memcpy(s_hello + i, DEVICE_ID_BYTES, DEVICE_ID_LEN); i += DEVICE_ID_LEN;
     memcpy(s_hello + i, SERVER_KEY_ID, KEY_ID_LEN); i += KEY_ID_LEN;
     memcpy(s_hello + i, client_nonce, NONCE_LEN); i += NONCE_LEN;
@@ -261,14 +267,17 @@ static bool handshake(int sock, pqc_session_t *session)
         ESP_LOGE(TAG, "no ServerHello - no answer or connection closed");
         return false;
     }
-    if (type != FRAME_SERVER_HELLO || len != SERVER_HELLO_LEN) {
+    uint16_t expected_len = fs ? SERVER_HELLO_LEN_FS : SERVER_HELLO_LEN;
+    if (type != FRAME_SERVER_HELLO || len != expected_len) {
         ESP_LOGE(TAG, "unexpected frame %#04x of %u bytes", type, len);
         return false;
     }
 
     const uint8_t *server_nonce = s_frame;
     const uint8_t *session_id = s_frame + NONCE_LEN;
-    const uint8_t *server_mac = s_frame + NONCE_LEN + SESSION_ID_LEN;
+    const uint8_t *ek_eph = fs ? s_frame + NONCE_LEN + SESSION_ID_LEN : NULL;
+    const uint8_t *server_mac = s_frame + NONCE_LEN + SESSION_ID_LEN
+                                + (fs ? MLKEM768_PUBLICKEYBYTES : 0);
 
     /* TH2 = SHA-256(ClientHello || server_nonce || session_id) */
     uint8_t th2[32];
@@ -278,6 +287,12 @@ static bool handshake(int sock, pqc_session_t *session)
     mbedtls_sha256_update(&sha, s_hello, CLIENT_HELLO_LEN);
     mbedtls_sha256_update(&sha, server_nonce, NONCE_LEN);
     mbedtls_sha256_update(&sha, session_id, SESSION_ID_LEN);
+    if (fs) {
+        /* TH2 covers the ephemeral key, so the server MAC below binds it. Without
+         * that binding a man in the middle could substitute its own ek and
+         * forward secrecy would protect nothing. */
+        mbedtls_sha256_update(&sha, ek_eph, MLKEM768_PUBLICKEYBYTES);
+    }
     mbedtls_sha256_finish(&sha, th2);
     mbedtls_sha256_free(&sha);
 
@@ -285,36 +300,96 @@ static bool handshake(int sock, pqc_session_t *session)
     memcpy(salt, client_nonce, NONCE_LEN);
     memcpy(salt + NONCE_LEN, server_nonce, NONCE_LEN);
 
-    uint8_t ikm[SS_LEN + PSK_LEN];
-    memcpy(ikm, ss, SS_LEN);
-    memcpy(ikm + SS_LEN, DEVICE_PSK_BYTES, PSK_LEN);
-
-    uint8_t prk[32];
     const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    mbedtls_hkdf_extract(md, salt, sizeof(salt), ikm, sizeof(ikm), prk);
-
     session_keys_t keys;
-    derive_key(prk, LABEL_SRV_CONFIRM, th2, keys.srv_confirm);
-    derive_key(prk, LABEL_CLI_CONFIRM, th2, keys.cli_confirm);
-    derive_key(prk, LABEL_C2S, th2, keys.c2s);
-    derive_key(prk, LABEL_S2C, th2, keys.s2c);
 
-    /* Wipe the inputs; the derived keys are what the session needs. */
-    memset(ikm, 0, sizeof(ikm));
-    memset(ss, 0, sizeof(ss));
-    memset(prk, 0, sizeof(prk));
+    /*
+     * Stage 1. Only ss_static and the PSK exist yet, because ss_eph cannot be
+     * derived until we have encapsulated to the ephemeral key below. In mode A
+     * this stage produces every key; in mode B only the server confirmation key.
+     */
+    uint8_t ikm1[SS_LEN + PSK_LEN];
+    memcpy(ikm1, ss, SS_LEN);
+    memcpy(ikm1 + SS_LEN, DEVICE_PSK_BYTES, PSK_LEN);
 
+    uint8_t prk1[32];
+    mbedtls_hkdf_extract(md, salt, sizeof(salt), ikm1, sizeof(ikm1), prk1);
+    derive_key(prk1, LABEL_SRV_CONFIRM, th2, keys.srv_confirm);
+    if (!fs) {
+        derive_key(prk1, LABEL_CLI_CONFIRM, th2, keys.cli_confirm);
+        derive_key(prk1, LABEL_C2S, th2, keys.c2s);
+        derive_key(prk1, LABEL_S2C, th2, keys.s2c);
+    }
+    memset(ikm1, 0, sizeof(ikm1));
+    memset(prk1, 0, sizeof(prk1));
+
+    /*
+     * The server MAC is verified BEFORE the ephemeral key is used. That ordering
+     * is the security property: TH2 covers ek_eph, so a valid MAC proves the
+     * ephemeral key came from the party holding dk_S and the PSK. Encapsulating
+     * first and checking afterwards would hand a man in the middle the session.
+     */
     uint8_t expected_mac[32];
     hmac_sha256(keys.srv_confirm, 32, th2, sizeof(th2), expected_mac);
     if (!ct_equal(expected_mac, server_mac, MAC_LEN)) {
         ESP_LOGE(TAG, "server MAC mismatch - this is not the pinned server");
+        memset(ss, 0, sizeof(ss));
         return false;
     }
 
-    uint8_t client_mac[32];
-    hmac_sha256_2(keys.cli_confirm, 32, th2, sizeof(th2), server_mac, MAC_LEN,
-                  client_mac);
-    if (!write_frame(sock, FRAME_CLIENT_FINISHED, client_mac, MAC_LEN)) {
+    uint8_t transcript[32];
+    memcpy(transcript, th2, sizeof(th2));
+    uint16_t finished_len = MAC_LEN;
+    int64_t eph_encap_us = 0;
+
+    if (fs) {
+        uint8_t ss_eph[SS_LEN];
+
+        /* ek_eph arrived over the network. mlkem768_enc applies the FIPS 203
+         * section 7.2 modulus check and refuses a non-canonical key - the check
+         * the encapsulationKeyCheck ACVP vectors cover, which was academic in
+         * mode A and is not any more. */
+        int64_t t_eph = esp_timer_get_time();
+        if (mlkem768_enc(s_out, ss_eph, ek_eph) != 0) {
+            ESP_LOGE(TAG, "ephemeral key rejected or encapsulation failed");
+            memset(ss, 0, sizeof(ss));
+            return false;
+        }
+        eph_encap_us = esp_timer_get_time() - t_eph;
+
+        /* TH3 = SHA-256(TH2 || ct_eph) */
+        mbedtls_sha256_init(&sha);
+        mbedtls_sha256_starts(&sha, 0);
+        mbedtls_sha256_update(&sha, th2, sizeof(th2));
+        mbedtls_sha256_update(&sha, s_out, MLKEM768_CIPHERTEXTBYTES);
+        mbedtls_sha256_finish(&sha, transcript);
+        mbedtls_sha256_free(&sha);
+
+        /* Stage 2: every key that protects data derives from ss_eph as well. */
+        uint8_t ikm2[SS_LEN * 2 + PSK_LEN];
+        memcpy(ikm2, ss, SS_LEN);
+        memcpy(ikm2 + SS_LEN, ss_eph, SS_LEN);
+        memcpy(ikm2 + 2 * SS_LEN, DEVICE_PSK_BYTES, PSK_LEN);
+
+        uint8_t prk2[32];
+        mbedtls_hkdf_extract(md, salt, sizeof(salt), ikm2, sizeof(ikm2), prk2);
+        derive_key(prk2, LABEL_CLI_CONFIRM, transcript, keys.cli_confirm);
+        derive_key(prk2, LABEL_C2S, transcript, keys.c2s);
+        derive_key(prk2, LABEL_S2C, transcript, keys.s2c);
+
+        memset(ikm2, 0, sizeof(ikm2));
+        memset(prk2, 0, sizeof(prk2));
+        memset(ss_eph, 0, sizeof(ss_eph));
+
+        finished_len = CLIENT_KEY_EXCHANGE_LEN;
+    }
+
+    memset(ss, 0, sizeof(ss));
+
+    uint8_t *mac_slot = fs ? s_out + MLKEM768_CIPHERTEXTBYTES : s_out;
+    hmac_sha256_2(keys.cli_confirm, 32, transcript, sizeof(transcript),
+                  server_mac, MAC_LEN, mac_slot);
+    if (!write_frame(sock, FRAME_CLIENT_FINISHED, s_out, finished_len)) {
         return false;
     }
 
@@ -322,8 +397,10 @@ static bool handshake(int sock, pqc_session_t *session)
     memcpy(session->c2s, keys.c2s, 32);
     session->send_seq = 0;
     session->encap_us = encap_us;
-    session->handshake_bytes = 3 + CLIENT_HELLO_LEN + 3 + SERVER_HELLO_LEN + 3
-                               + MAC_LEN;
+    session->eph_encap_us = eph_encap_us;
+    session->forward_secrecy = fs;
+    session->handshake_bytes = 3 + CLIENT_HELLO_LEN + 3 + expected_len + 3
+                               + finished_len;
     return true;
 }
 
@@ -381,9 +458,15 @@ static bool send_record(int sock, pqc_session_t *session, const uint8_t *plain,
 
 /* -------------------------------------------------------------------- API -- */
 
-bool pqc_session_run(int record_count)
+bool pqc_session_run(pqc_mode_t mode, int record_count)
 {
-    ESP_LOGI(TAG, "connecting to %s:%d", SERVER_HOST, SERVER_PORT);
+    const uint8_t suite = (mode == PQC_MODE_B_FORWARD_SECRECY)
+                              ? SUITE_MLKEM768_FS
+                              : SUITE_MLKEM768;
+
+    ESP_LOGI(TAG, "mode %s, connecting to %s:%d",
+             (mode == PQC_MODE_B_FORWARD_SECRECY) ? "B (forward secrecy)" : "A",
+             SERVER_HOST, SERVER_PORT);
 
     int sock = connect_to_server(SERVER_HOST, SERVER_PORT);
     if (sock < 0) {
@@ -392,7 +475,7 @@ bool pqc_session_run(int record_count)
 
     pqc_session_t session = {0};
     int64_t t0 = esp_timer_get_time();
-    bool ok = handshake(sock, &session);
+    bool ok = handshake(sock, &session, suite);
     int64_t handshake_us = esp_timer_get_time() - t0;
 
     if (!ok) {
@@ -400,9 +483,17 @@ bool pqc_session_run(int record_count)
         return false;
     }
 
-    ESP_LOGI(TAG, "handshake ok in %lld ms (encapsulation %lld ms), %u bytes",
-             handshake_us / 1000, session.encap_us / 1000,
-             (unsigned)session.handshake_bytes);
+    if (session.forward_secrecy) {
+        ESP_LOGI(TAG,
+                 "handshake ok in %lld ms (encap static %lld us, ephemeral "
+                 "%lld us), %u bytes",
+                 handshake_us / 1000, session.encap_us, session.eph_encap_us,
+                 (unsigned)session.handshake_bytes);
+    } else {
+        ESP_LOGI(TAG, "handshake ok in %lld ms (encap static %lld us), %u bytes",
+                 handshake_us / 1000, session.encap_us,
+                 (unsigned)session.handshake_bytes);
+    }
 
     size_t payload_total = 0;
     for (int n = 0; n < record_count; n++) {

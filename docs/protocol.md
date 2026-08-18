@@ -246,18 +246,78 @@ Client                                                    Server
 ```
 
 ServerHello gains `ek_E` (1184 B), and ClientFinished becomes ClientKeyExchange
-carrying `ct_eph` (1088 B) ahead of `client_mac`. The key schedule changes in one
-place:
+carrying `ct_eph` (1088 B) ahead of `client_mac`.
+
+### The key schedule runs in two stages
+
+This is not a one-line change to mode A, and the reason is a matter of ordering:
+the server has to authenticate `ek_E` in ServerHello, but `ss_eph` does not exist
+until the client has encapsulated to `ek_E` in the message after. So the schedule
+splits.
+
+**Stage 1** — after the server decapsulates `ct_static`. Only `ss_static` and the
+PSK are available.
 
 ```
-IKM = ss_static || ss_eph || PSK                        (96 bytes)
+TH2  = H(ClientHello || server_nonce || session_id || ek_E)
+
+PRK1 = HKDF-Extract(client_nonce || server_nonce, ss_static || PSK)
+k_srv_confirm = HKDF-Expand(PRK1, "PQC-IoT-1 server confirm" || TH2, 32)
+
+server_mac = MAC(k_srv_confirm, TH2)
 ```
 
-`dk_E` is destroyed as soon as `ss_eph` is derived. Recovering `dk_S` afterwards
-no longer helps: `ss_eph` is unrecoverable, and it is part of every session key.
+`TH2` covers `ek_E`, so the MAC binds it. This is the load-bearing part of mode B:
+without it, a man in the middle could substitute its own ephemeral key and read
+everything. Only a party holding both `dk_S` and the PSK can produce that MAC.
 
-The cost, which v2 measures: one extra encapsulation on the device, one extra
-key generation on the server, and 2272 extra bytes on the wire per handshake.
+**Stage 2** — after the client encapsulates to `ek_E` and the server decapsulates
+`ct_eph`. Now both secrets exist.
+
+```
+TH3  = H(TH2 || ct_eph)
+
+PRK2 = HKDF-Extract(client_nonce || server_nonce, ss_static || ss_eph || PSK)
+k_cli_confirm = HKDF-Expand(PRK2, "PQC-IoT-1 client confirm" || TH3, 32)
+k_c2s         = HKDF-Expand(PRK2, "PQC-IoT-1 c2s" || TH3, 32)
+k_s2c         = HKDF-Expand(PRK2, "PQC-IoT-1 s2c" || TH3, 32)
+
+client_mac = MAC(k_cli_confirm, TH3 || server_mac)
+```
+
+Every key that protects data derives from `PRK2`, and therefore from `ss_eph`.
+
+### ClientKeyExchange (`0x03`), 1120 bytes
+
+| Field | Type | Bytes |
+|---|---|---|
+| `ct_eph` | u8[1088] | 1088 |
+| `client_mac` | u8[32] | 32 |
+
+### Destroying the ephemeral key
+
+`dk_E` must be erased as soon as `ss_eph` has been derived, and it must never
+touch persistent storage. That erasure is the entire mechanism: an adversary who
+records these sessions and later obtains `dk_S` can recover `ss_static`, but
+`ss_eph` is gone, and without it no session key can be reconstructed.
+
+Forward secrecy here is only as good as that deletion. A server that keeps
+ephemeral keys in a log, a core dump or swap provides none.
+
+### Validating a key that arrived over the network
+
+`ek_E` is the first key material in this protocol that comes off the wire rather
+than out of firmware. Encapsulating to it must therefore apply the FIPS 203 §7.2
+input check and reject a public key whose coefficients are not canonically
+reduced. This is exactly what the `encapsulationKeyCheck` ACVP vectors cover
+([conformance.md](conformance.md)) — a check that was academic in mode A and is
+not any more.
+
+### The cost
+
+One extra encapsulation on the device, one extra key generation on the server,
+and 2272 extra bytes on the wire per handshake. Measuring what that is worth in
+millijoules is v2.
 
 ## Data records (`0x10`)
 

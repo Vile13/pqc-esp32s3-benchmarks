@@ -79,6 +79,9 @@ reported as such.
 - Per operation: cycles for key generation, encapsulation, decapsulation; peak
   stack via high-water marks; flash footprint
 - Classical baseline (X25519) and hybrid (X25519 + ML-KEM-768) on the same harness
+- Mode A versus mode B in millijoules — the wall-clock delta is already measured
+  (+200 ms device side, of which only 7.3 ms is the device's own extra
+  cryptography), but wall clock is not energy
 - Repeated runs with reported spread, never single best-case figures
 - Energy per handshake, measured by the NodeMCU + INA219 in the supply line —
   the device under test never measures itself (see [hardware.md](hardware.md))
@@ -101,6 +104,8 @@ millijoules across the classical, post-quantum and hybrid configurations.
 
 - **ML-DSA (FIPS 204)** as an authentication alternative to the PSK. It shifts
   flash, RAM and message volume all at once, so it belongs after a stable baseline.
+- **Mode B is implemented** as of 2026-08-18 (it was listed here as v2 work).
+  See [interop.md](interop.md) for the measured cost.
 - **SLH-DSA (FIPS 205)** as a contrast case — large signatures show where the
   embedded limit actually sits.
 - **TLS 1.3 / DTLS** via wolfSSL, as a realistic-protocol comparison against the

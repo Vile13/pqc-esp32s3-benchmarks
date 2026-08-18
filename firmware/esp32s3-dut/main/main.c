@@ -200,9 +200,15 @@ void app_main(void)
         return;
     }
 
-    if (pqc_session_run(3)) {
+    /* Both modes back to back, so the cost of forward secrecy is measured on
+     * the same board in the same conditions rather than across two runs. */
+    bool mode_a = pqc_session_run(PQC_MODE_A, 3);
+    bool mode_b = pqc_session_run(PQC_MODE_B_FORWARD_SECRECY, 3);
+
+    if (mode_a && mode_b) {
         printf("\nsession completed\n");
     } else {
-        printf("\nsession failed\n");
+        printf("\nsession failed (mode A %s, mode B %s)\n",
+               mode_a ? "ok" : "FAILED", mode_b ? "ok" : "FAILED");
     }
 }

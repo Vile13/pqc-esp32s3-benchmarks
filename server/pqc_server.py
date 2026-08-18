@@ -139,6 +139,68 @@ class MlKemPrivateKey:
         return ss
 
 
+def raw_public_from_der(der: bytes) -> bytes:
+    for raw_len in (800, 1184, 1568):
+        if len(der) == raw_len + 22:
+            return der[-raw_len:]
+    raise p.ProtocolError(f"unexpected public key DER length {len(der)}")
+
+
+class EphemeralKey:
+    """
+    A per-session ML-KEM key pair, deleted as soon as the session key exists.
+
+    That deletion is the whole mechanism of mode B. An adversary who records
+    traffic and later obtains the server's long-term key recovers ss_static but
+    not ss_eph, and every key protecting data derives from both. Forward secrecy
+    is exactly as good as this erasure - a server that leaves ephemeral keys in a
+    log or a swap file provides none.
+    """
+
+    def __init__(self, level: int):
+        self._dir = tempfile.TemporaryDirectory()
+        self.path = Path(self._dir.name) / "eph.pem"
+        subprocess.run(
+            ["openssl", "genpkey", "-algorithm", f"ML-KEM-{level}",
+             "-out", str(self.path)],
+            capture_output=True, check=True,
+        )
+        self.path.chmod(0o600)
+        der = subprocess.run(
+            ["openssl", "pkey", "-in", str(self.path), "-pubout",
+             "-outform", "DER"],
+            capture_output=True, check=True,
+        ).stdout
+        self.raw_public = raw_public_from_der(der)
+
+    def decapsulate(self, ciphertext: bytes) -> bytes:
+        with tempfile.TemporaryDirectory() as tmp:
+            ct = Path(tmp) / "ct.bin"
+            ss = Path(tmp) / "ss.bin"
+            ct.write_bytes(ciphertext)
+            result = subprocess.run(
+                ["openssl", "pkeyutl", "-decap", "-inkey", str(self.path),
+                 "-in", str(ct), "-secret", str(ss)],
+                capture_output=True,
+            )
+            if result.returncode != 0 or not ss.exists():
+                raise p.ProtocolError("ephemeral decapsulation failed")
+            return ss.read_bytes()
+
+    def destroy(self) -> None:
+        try:
+            if self.path.exists():
+                # Overwrite before unlinking. On a journalling filesystem this is
+                # not a guarantee, which is why the file lives in a tmpfs-backed
+                # temporary directory in the first place.
+                size = self.path.stat().st_size
+                self.path.write_bytes(b"\x00" * size)
+        except OSError:
+            pass
+        finally:
+            self._dir.cleanup()
+
+
 def handle_connection(conn: socket.socket, peer, key: MlKemPrivateKey,
                       devices: DeviceTable) -> None:
     conn.settimeout(20)
@@ -168,32 +230,82 @@ def handle_connection(conn: socket.socket, peer, key: MlKemPrivateKey,
     if not hmac.compare_digest(expected_mac, hello.psk_mac):
         raise p.ProtocolError("PSK MAC mismatch")
 
+    params = p.SUITE_PARAMS[hello.suite]
+    forward_secrecy = params["fs"]
+
     t_decap = time.monotonic()
-    ss = key.decapsulate(hello.kem_ct)
+    ss_static = key.decapsulate(hello.kem_ct)
     decap_ms = (time.monotonic() - t_decap) * 1000
 
     server_nonce = secrets.token_bytes(p.NONCE_LEN)
     session_id = secrets.token_bytes(p.SESSION_ID_LEN)
-    th2 = p.transcript_2(hello.raw, server_nonce, session_id)
-    keys = p.derive_keys(ss, psk, hello.client_nonce, server_nonce, th2)
 
-    server_mac = hmac.new(keys.srv_confirm, th2, "sha256").digest()
-    p.write_frame(conn, p.FRAME_SERVER_HELLO,
-                  p.build_server_hello(server_nonce, session_id, server_mac))
+    ephemeral = None
+    keygen_ms = 0.0
+    try:
+        if forward_secrecy:
+            t_keygen = time.monotonic()
+            ephemeral = EphemeralKey(params["level"])
+            keygen_ms = (time.monotonic() - t_keygen) * 1000
+            ek_eph = ephemeral.raw_public
+        else:
+            ek_eph = b""
 
-    ftype, payload = p.read_frame(conn)
-    if ftype != p.FRAME_CLIENT_FINISHED:
-        raise p.ProtocolError(f"expected ClientFinished, got {ftype:#04x}")
-    if len(payload) != p.MAC_LEN:
-        raise p.ProtocolError("ClientFinished has wrong length")
+        th2 = p.transcript_2(hello.raw, server_nonce, session_id, ek_eph)
 
-    expected = hmac.new(keys.cli_confirm, th2 + server_mac, "sha256").digest()
-    if not hmac.compare_digest(expected, payload):
+        if forward_secrecy:
+            srv_confirm = p.derive_stage1(ss_static, psk, hello.client_nonce,
+                                          server_nonce, th2)
+        else:
+            keys = p.derive_keys(ss_static, psk, hello.client_nonce,
+                                 server_nonce, th2)
+            srv_confirm = keys.srv_confirm
+
+        server_mac = hmac.new(srv_confirm, th2, "sha256").digest()
+        p.write_frame(
+            conn, p.FRAME_SERVER_HELLO,
+            server_nonce + session_id + ek_eph + server_mac,
+        )
+
+        ftype, payload = p.read_frame(conn)
+        if ftype != p.FRAME_CLIENT_FINISHED:
+            raise p.ProtocolError(f"expected ClientFinished, got {ftype:#04x}")
+
+        if forward_secrecy:
+            if len(payload) != params["ct"] + p.MAC_LEN:
+                raise p.ProtocolError("ClientKeyExchange has wrong length")
+            ct_eph = payload[:params["ct"]]
+            client_mac = payload[params["ct"]:]
+
+            t_eph = time.monotonic()
+            ss_eph = ephemeral.decapsulate(ct_eph)
+            decap_ms += (time.monotonic() - t_eph) * 1000
+
+            th3 = p.transcript_3(th2, ct_eph)
+            keys = p.derive_stage2(ss_static, ss_eph, psk, hello.client_nonce,
+                                   server_nonce, th3)
+            transcript_for_mac = th3
+        else:
+            if len(payload) != p.MAC_LEN:
+                raise p.ProtocolError("ClientFinished has wrong length")
+            client_mac = payload
+            transcript_for_mac = th2
+    finally:
+        # Destroyed whether the handshake succeeded or not: an ephemeral key
+        # that outlives its session is no longer ephemeral.
+        if ephemeral is not None:
+            ephemeral.destroy()
+
+    expected = hmac.new(keys.cli_confirm, transcript_for_mac + server_mac,
+                        "sha256").digest()
+    if not hmac.compare_digest(expected, client_mac):
         raise p.ProtocolError("ClientFinished MAC mismatch")
 
     handshake_ms = (time.monotonic() - t_start) * 1000
-    log.info("%s: handshake complete session=%s (%.1f ms total, %.1f ms decap)",
-             peer, session_id.hex(), handshake_ms, decap_ms)
+    log.info("%s: handshake complete session=%s mode=%s "
+             "(%.1f ms total, %.1f ms decap, %.1f ms keygen)",
+             peer, session_id.hex(), "B/fs" if forward_secrecy else "A",
+             handshake_ms, decap_ms, keygen_ms)
 
     inbound = p.RecordStream(keys.c2s, session_id)
     records = 0
