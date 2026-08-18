@@ -72,14 +72,21 @@ rather than a tautology. Details, scope and provenance in
 verified on the board rather than assumed, and the cycle counter agrees with the
 configured 240 MHz clock — [docs/bringup.md](docs/bringup.md).
 
+## Setting it up
+
+Provisioning — server key pair, device identity, PSK, Wi-Fi — is described in
+[docs/provisioning.md](docs/provisioning.md). Credentials live in gitignored
+files and are never committed.
+
 ## Repository layout
 
 ```
 firmware/    ESP-IDF project for the ESP32-S3 (device under test)
 server/      Python reference server (counterpart of the handshake)
 benchmarks/  measurement harness, raw results, plots
-tests/       NIST KATs, malformed-input and replay tests
-docs/        hardware, protocol, threat model, limitations
+tests/       NIST ACVP vectors, malformed-input and replay tests
+tools/       provisioning helpers
+docs/        hardware, protocol, provisioning, conformance, limitations
 ```
 
 ## License

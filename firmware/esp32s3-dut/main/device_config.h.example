@@ -1,0 +1,73 @@
+/*
+ * Per-device configuration and secrets. TEMPLATE.
+ *
+ *   cp device_config.h.example device_config.h
+ *
+ * device_config.h is gitignored and must stay that way. It holds this device's
+ * PSK and your Wi-Fi password. Nothing in this file belongs in a commit.
+ *
+ * Every value below is explained in docs/provisioning.md, including the exact
+ * command to generate it. Do not invent the random ones by hand - a PSK typed
+ * from imagination is the weakest part of an otherwise post-quantum system.
+ */
+
+#ifndef DEVICE_CONFIG_H
+#define DEVICE_CONFIG_H
+
+/* ---------------------------------------------------------------- network -- */
+
+#define WIFI_SSID     "your-ssid-here"
+#define WIFI_PASSWORD "your-wifi-password-here"
+
+/* The Raspberry Pi running the reference server. Give it a static lease in your
+ * router, or the address will move and the firmware will need reflashing. */
+#define SERVER_HOST "192.168.188.53"
+#define SERVER_PORT 8443
+
+/* How often the client gives up on a connection attempt, and how long it waits
+ * before retrying. Retries back off; this is the first interval. */
+#define CONNECT_TIMEOUT_MS 8000
+#define RETRY_BASE_MS      2000
+
+/* ----------------------------------------------------------- identity/PSK -- */
+
+/*
+ * 8-byte device identifier. Not secret - it travels in the clear in ClientHello
+ * so the server can look up the right PSK. It only has to be unique across your
+ * devices.
+ *
+ *   openssl rand -hex 8 | sed 's/../0x&, /g'
+ */
+#define DEVICE_ID { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
+
+/*
+ * 32-byte pre-shared key. SECRET. The same bytes must be registered for this
+ * device_id on the server.
+ *
+ * Per docs/protocol.md this is not merely an authentication token: it is mixed
+ * into the key schedule alongside the ML-KEM shared secret. An adversary who
+ * breaks ML-KEM still faces these 256 bits. That only holds if they really are
+ * 256 random bits.
+ *
+ *   openssl rand -hex 32 | sed 's/../0x&, /g'
+ */
+#define DEVICE_PSK                                                            \
+    {                                                                         \
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     \
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     \
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00            \
+    }
+
+/* --------------------------------------------------------------- rekeying -- */
+
+/*
+ * Seconds between handshakes. This is the knob the whole project is about:
+ * a mode A handshake costs about 33 sensor readings on the wire, a mode B one
+ * about 91 (docs/protocol.md). Shorter interval, better forward secrecy,
+ * proportionally more of the node's energy spent on key establishment.
+ *
+ * 3600 is a starting point, not a recommendation. v2 measures what it costs.
+ */
+#define REKEY_INTERVAL_S 3600
+
+#endif /* DEVICE_CONFIG_H */
