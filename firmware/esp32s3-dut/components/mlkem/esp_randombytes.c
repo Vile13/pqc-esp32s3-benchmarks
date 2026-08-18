@@ -29,11 +29,34 @@
 #include "esp_random.h"
 #include "sdkconfig.h"
 
+#if defined(CONFIG_ESP_WIFI_ENABLED)
+#include "esp_wifi.h"
+#endif
+
 static const char *TAG = "mlkem_rng";
 
-#if !defined(CONFIG_ESP_WIFI_ENABLED) && !defined(CONFIG_BT_ENABLED)
-#define MLKEM_RNG_NO_RF_ENTROPY 1
+/*
+ * The condition is that the radio is RUNNING, not that it is compiled in.
+ * CONFIG_ESP_WIFI_ENABLED is set by default on every chip that has Wi-Fi, so a
+ * compile-time check alone would pass in a build that never calls
+ * esp_wifi_start() - exactly the case this is supposed to catch.
+ */
+static bool rf_entropy_available(void)
+{
+#if defined(CONFIG_ESP_WIFI_ENABLED)
+    wifi_mode_t mode;
+    /* Returns ESP_ERR_WIFI_NOT_INIT until esp_wifi_init() has run, and reports
+     * WIFI_MODE_NULL while the radio is initialised but idle. */
+    if (esp_wifi_get_mode(&mode) == ESP_OK && mode != WIFI_MODE_NULL) {
+        return true;
+    }
 #endif
+#if defined(CONFIG_BT_ENABLED)
+    return true; /* Bluetooth controller state is not queried here. */
+#else
+    return false;
+#endif
+}
 
 int randombytes(uint8_t *out, size_t outlen)
 {
@@ -41,18 +64,16 @@ int randombytes(uint8_t *out, size_t outlen)
         return -1;
     }
 
-#if defined(MLKEM_RNG_NO_RF_ENTROPY)
-    /* Neither Wi-Fi nor Bluetooth is compiled in, so the hardware RNG has no
-     * guaranteed entropy source. Refuse rather than hand back key material that
-     * looks perfectly random and is not. Benchmarks must use the _derand API. */
-    ESP_LOGE(TAG,
-             "randombytes() called in a build without Wi-Fi or Bluetooth - "
-             "hardware RNG has no guaranteed entropy source. Use the _derand "
-             "API for benchmarks. Refusing.");
-    (void)outlen;
-    return -1;
-#else
+    if (!rf_entropy_available()) {
+        /* Refuse rather than hand back key material that looks perfectly
+         * random and is not. Benchmarks must use the _derand API. */
+        ESP_LOGE(TAG,
+                 "randombytes() called while the radio is not running - the "
+                 "hardware RNG has no guaranteed entropy source. Use the "
+                 "_derand API for benchmarks. Refusing.");
+        return -1;
+    }
+
     esp_fill_random(out, outlen);
     return 0;
-#endif
 }

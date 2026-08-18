@@ -68,6 +68,13 @@ NIST's ACVP-Server, not from the library under test, so passing them is evidence
 rather than a tautology. Details, scope and provenance in
 [docs/conformance.md](docs/conformance.md).
 
+**Vertical slice:** an ESP32-S3 establishes an ML-KEM-768 session with a
+Raspberry Pi and sends AES-256-GCM encrypted records over it. The two ends share
+no cryptographic code — mlkem-native on the device, OpenSSL on the server — so
+interoperating is evidence rather than a mirror. Handshake 105 ms on the device,
+1279 bytes on the wire, exactly the figure the specification predicted before any
+code existed. See [docs/interop.md](docs/interop.md).
+
 **Bring-up:** toolchain builds and runs, buffer placement in internal SRAM is
 verified on the board rather than assumed, and the cycle counter agrees with the
 configured 240 MHz clock — [docs/bringup.md](docs/bringup.md).

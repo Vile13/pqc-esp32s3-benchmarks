@@ -36,7 +36,7 @@ defined for these two parameter sets — including the FIPS 203 §7.2 key validi
 checks that decide whether a malformed key arriving over the network is rejected
 or quietly processed. See [conformance.md](conformance.md).
 
-### v1.1 — the handshake
+### v1.1 — the handshake ✅ done (2026-08-18)
 
 - Protocol specified before implementation: [protocol.md](protocol.md)
 - Transport is plain TCP, not MQTT. A handshake is request/response, MQTT is
@@ -61,6 +61,10 @@ than a mirror — a useful second signal alongside the KATs.
 
 **Done when:** the S3 sends encrypted, authenticated data the Pi can decrypt,
 and a tampered ciphertext or a replayed frame is rejected.
+
+Result: done, see [interop.md](interop.md). The rejection tests currently run
+against the Python test client; pointing the firmware at a misbehaving server is
+still outstanding.
 
 ## v2 — measurement
 

@@ -31,6 +31,8 @@
 
 #include "mlkem_kat.h"
 #include "mlkem_selftest.h"
+#include "pqc_session.h"
+#include "wifi_sta.h"
 
 /* Roughly the largest working buffer an ML-KEM-768 operation is expected to
  * need. Used here only to prove the allocation lands where we claim it does. */
@@ -180,4 +182,27 @@ void app_main(void)
            (placement_ok && counter_ok && selftest_ok && kat_ok) ? "PASS"
                                                                         : "FAIL");
     printf("\nML-KEM verified against NIST ACVP vectors on this device\n");
+
+    if (!(placement_ok && counter_ok && selftest_ok && kat_ok)) {
+        printf("\nbring-up failed - not starting the protocol client\n");
+        return;
+    }
+
+    /*
+     * Only now does the radio come up. Everything above ran on fixed inputs via
+     * the _derand API and needed no randomness; everything below generates
+     * nonces and a KEM ciphertext, which the hardware RNG can only supply
+     * honestly while the radio runs (docs/hardware.md).
+     */
+    printf("\n=== protocol client ===\n");
+    if (wifi_sta_start() != ESP_OK) {
+        printf("no network - protocol client not started\n");
+        return;
+    }
+
+    if (pqc_session_run(3)) {
+        printf("\nsession completed\n");
+    } else {
+        printf("\nsession failed\n");
+    }
 }

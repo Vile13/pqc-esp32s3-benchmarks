@@ -14,6 +14,7 @@ idf_component_register(
     REQUIRES
         esp_hw_support
         log
+        esp_wifi   # only to ask at runtime whether the radio is up, see esp_randombytes.c
 )
 
 # Point mlkem-native at this project's configuration instead of its default.

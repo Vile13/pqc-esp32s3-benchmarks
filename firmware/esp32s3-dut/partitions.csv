@@ -1,0 +1,14 @@
+# Partition table for the ESP32-S3-DevKitC-1-N8R8 (8 MB flash).
+#
+# ESP-IDF's default single-factory layout gives the app 1 MB, which this build
+# outgrew: the Wi-Fi and lwIP stacks cost roughly 590 KB on top of the ML-KEM
+# code and the 160 committed ACVP test vectors.
+#
+# 3 MB is deliberately generous. The verification build carries ~375 KB of test
+# vectors that the protocol firmware will not, and there is room for an OTA
+# layout later without moving anything that already exists.
+#
+# Name,     Type, SubType, Offset,   Size
+nvs,        data, nvs,     0x9000,   0x6000
+phy_init,   data, phy,     0xf000,   0x1000
+factory,    app,  factory, 0x10000,  0x300000
