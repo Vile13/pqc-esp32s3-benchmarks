@@ -35,6 +35,9 @@ FRAME_CLOSE = 0x7F
 
 MAX_FRAME = 4096
 
+# ServerHello is fixed-length in mode A: nonce + session id + MAC.
+SERVER_HELLO_LEN = 32 + 8 + 32
+
 NONCE_LEN = 32
 SESSION_ID_LEN = 8
 DEVICE_ID_LEN = 8

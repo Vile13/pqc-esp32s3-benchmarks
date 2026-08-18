@@ -23,7 +23,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_CONFIG = Path("firmware/esp32s3-dut/main/device_config.h")
+# Resolved from this file's location rather than the working directory, so the
+# tool works from anywhere instead of only from the repository root.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = REPO_ROOT / "firmware/esp32s3-dut/main/device_config.h"
 REMOTE_TABLE = "~/pqc-server/devices.json"
 
 

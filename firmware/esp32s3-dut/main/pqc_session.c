@@ -256,7 +256,9 @@ static bool handshake(int sock, pqc_session_t *session)
     uint8_t type;
     uint16_t len;
     if (!read_frame(sock, &type, s_frame, sizeof(s_frame), &len)) {
-        ESP_LOGE(TAG, "no ServerHello - server closed the connection");
+        /* Covers both a closed socket and an expired receive timeout; the
+         * two are indistinguishable here and both are fatal. */
+        ESP_LOGE(TAG, "no ServerHello - no answer or connection closed");
         return false;
     }
     if (type != FRAME_SERVER_HELLO || len != SERVER_HELLO_LEN) {

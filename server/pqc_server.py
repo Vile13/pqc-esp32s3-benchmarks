@@ -38,31 +38,54 @@ log = logging.getLogger("pqc-server")
 
 
 class DeviceTable:
-    """device_id -> PSK, loaded from a 0600 JSON file."""
+    """
+    device_id -> PSK, from a 0600 JSON file.
+
+    Re-read whenever the file changes on disk. Caching it at startup was the
+    original design and it produced a genuinely confusing failure: registering a
+    device while the server was running had no effect, and the server reported
+    'unknown device' for an id that was plainly present in the table. Newly
+    provisioned devices now work without a restart.
+    """
 
     def __init__(self, path: Path):
         self.path = path
+        self._mtime = None
+        self._psks: dict[bytes, bytes] = {}
         if not path.exists():
             raise SystemExit(
                 f"device table {path} not found - register a device first "
                 "(tools/register_device.py)"
             )
-        mode = path.stat().st_mode & 0o777
+        self._reload()
+
+    def _reload(self) -> None:
+        stat = self.path.stat()
+        mode = stat.st_mode & 0o777
         if mode & 0o077:
             raise SystemExit(
-                f"device table {path} has mode {mode:o}; it holds PSKs and must "
-                "be 0600"
+                f"device table {self.path} has mode {mode:o}; it holds PSKs and "
+                "must be 0600"
             )
-        raw = json.loads(path.read_text())
-        self._psks = {
-            bytes.fromhex(k): bytes.fromhex(v) for k, v in raw.items()
-        }
-        for did, psk in self._psks.items():
+
+        raw = json.loads(self.path.read_text())
+        psks = {bytes.fromhex(k): bytes.fromhex(v) for k, v in raw.items()}
+        for did, psk in psks.items():
             if len(did) != p.DEVICE_ID_LEN or len(psk) != p.PSK_LEN:
                 raise SystemExit(f"malformed entry for device {did.hex()}")
-        log.info("loaded %d device(s)", len(self._psks))
+
+        self._psks = psks
+        self._mtime = stat.st_mtime
+        log.info("device table loaded: %d device(s)", len(psks))
 
     def psk_for(self, device_id: bytes) -> bytes | None:
+        try:
+            if self.path.stat().st_mtime != self._mtime:
+                self._reload()
+        except (OSError, ValueError) as exc:
+            # Keep serving the last good table rather than dropping every device
+            # because someone is mid-edit.
+            log.warning("device table unreadable, keeping cached copy: %s", exc)
         return self._psks.get(device_id)
 
 

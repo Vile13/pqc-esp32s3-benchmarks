@@ -24,6 +24,9 @@ RAW_PUBKEY_BYTES = {512: 800, 768: 1184, 1024: 1568}
 
 REMOTE_DIR = "~/pqc-server"
 
+# Resolved from this file's location, so the tool works from any directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 def ssh(host: str, script: str, key: Path | None) -> str:
     cmd = ["ssh", "-o", "BatchMode=yes"]
@@ -99,9 +102,12 @@ def main() -> int:
     ap.add_argument(
         "--out",
         type=Path,
-        default=Path("firmware/esp32s3-dut/main/server_key.h"),
+        default=None,
     )
     args = ap.parse_args()
+
+    if args.out is None:
+        args.out = REPO_ROOT / "firmware/esp32s3-dut/main/server_key.h"
 
     expected = RAW_PUBKEY_BYTES[args.level]
 

@@ -62,9 +62,9 @@ than a mirror — a useful second signal alongside the KATs.
 **Done when:** the S3 sends encrypted, authenticated data the Pi can decrypt,
 and a tampered ciphertext or a replayed frame is rejected.
 
-Result: done, see [interop.md](interop.md). The rejection tests currently run
-against the Python test client; pointing the firmware at a misbehaving server is
-still outstanding.
+Result: done, see [interop.md](interop.md). Rejection paths are covered in both
+directions — six against the server via `server/test_client.py --negative`, seven
+against the firmware via `tests/hostile_server_drill.py`.
 
 ## v2 — measurement
 

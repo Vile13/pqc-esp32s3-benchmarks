@@ -88,7 +88,51 @@ firmware produced precisely that. The ratio arguments in
   and not yet implemented.
 - **Nothing about energy.** The question this project exists to answer is what a
   rekey costs in millijoules, and that needs the INA219 harness from v2.
-- **Nothing about a hostile network.** The rejection tests
-  ([server/README.md](../server/README.md)) run against the Python client; the
-  firmware has not yet been pointed at a misbehaving server.
 - **No side-channel claims**, here or anywhere else in this project.
+
+## Rejection paths, both directions
+
+A channel is only as good as what it refuses. Two harnesses cover the two
+directions, and both are needed: a server that accepts a forged MAC and a client
+that believes whatever answers on port 8443 both pass a happy-path demo
+perfectly.
+
+**Hostile client against the real server** — `server/test_client.py --negative`:
+forged PSK MAC, unknown device_id, wrong PSK, forged ClientFinished, replayed
+data record, tampered ciphertext. All six rejected, with the reason logged
+locally and nothing revealed on the wire.
+
+**Hostile server against the real firmware** — `tests/hostile_server_drill.py`
+starts `server/rogue_server.py` on the Pi in place of the real server, resets the
+board for each case, and reads the verdict off the serial line:
+
+```
+  ok    wrong-mac   server MAC mismatch - this is not the pinned server
+  ok    impostor    server MAC mismatch - this is not the pinned server
+  ok    replay      server MAC mismatch - this is not the pinned server
+  ok    bad-type    unexpected frame 0x42 of 72 bytes
+  ok    bad-length  unexpected frame 0x02 of 71 bytes
+  ok    truncate    no ServerHello - no answer or connection closed
+  ok    silence     no ServerHello - no answer or connection closed
+
+7/7 rejection paths hold
+```
+
+The `impostor` case is the one that matters most: a man in the middle holding its
+own ML-KEM key pair, answering in the pinned server's place. It cannot
+decapsulate a ciphertext addressed to the pinned key, so the shared secret it
+derives is not the device's, and the confirmation MAC does not verify. That is
+pinning doing its job.
+
+`replay` needs two rounds — the rogue server records a valid ServerHello on the
+first connection and replays it on the second. The first version of the drill ran
+each mode once and therefore graded the recording round, which legitimately
+succeeds. Worth stating, because a test harness that scores its own setup phase
+is a way to get a green result that means nothing.
+
+### A bug this found
+
+The server cached the device table at startup. Registering a device while the
+server was running had no effect: the server reported `unknown device` for an id
+that was plainly present in `devices.json`. It now re-reads the file whenever its
+modification time changes.
