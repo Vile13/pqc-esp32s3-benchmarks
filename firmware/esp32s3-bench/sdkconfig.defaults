@@ -1,0 +1,36 @@
+# Benchmark build for the ESP32-S3-DevKitC-1-N8R8.
+#
+# This build never brings up the radio. It has no Wi-Fi, no lwIP, no I2C and no
+# display, because retransmissions, power management and sensor timing would all
+# land inside the measurement window and make a fluctuating figure impossible to
+# attribute (docs/roadmap.md).
+#
+# Consequence, and it is deliberate: the hardware RNG has no guaranteed entropy
+# source here, so randombytes() refuses to serve and every measured operation
+# uses the *_derand API with fixed inputs. Fixed inputs also make runs
+# reproducible, which is what a benchmark needs anyway.
+
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# Fixed, stated clock. Results are reported in cycles; the frequency only matters
+# for converting them to time.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_PM_ENABLE=n
+
+# PSRAM present but off limits to cryptographic buffers - see docs/hardware.md.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+
+# ML-KEM working buffers plus the benchmark harness.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# Long uninterrupted measurement loops.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=60
+CONFIG_MBEDTLS_ECDH_C=y
+CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED=y

@@ -30,3 +30,4 @@ tests/acvp/.acvp-data/
 # Deployment state and secrets: never committed.
 firmware/esp32s3-dut/main/device_config.h
 firmware/esp32s3-dut/main/server_key.h
+firmware/esp32s3-bench/main/device_config.h

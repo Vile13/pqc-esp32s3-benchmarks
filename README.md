@@ -61,7 +61,19 @@ Full wiring, addresses and rationale: [docs/hardware.md](docs/hardware.md)
 
 ## Results
 
-**Benchmarks:** _pending_ — no measurement runs have been made yet.
+**Benchmarks:** measured on a radio-free build — ML-KEM-768 keygen 5.5 ms,
+encapsulation 6.5 ms, decapsulation 8.0 ms at 240 MHz, 14.4 KB of flash for both
+parameter sets, 18.6 KB peak stack. Full table, method and the important caveat
+about the X25519 baseline in [docs/benchmarks.md](docs/benchmarks.md).
+
+The headline finding is not the one expected: on an ESP32-S3 using the
+cryptography ESP-IDF actually ships, ML-KEM-768 key establishment is *cheaper in
+CPU time* than classical X25519. The post-quantum cost on this platform is
+bandwidth and memory, not computation — which sharpens the research question
+above rather than answering it.
+
+**Energy:** _pending_ — cycles are not joules, and the INA219 harness is the next
+piece of work.
 
 **Correctness:** ML-KEM-512 and ML-KEM-768 pass all 160 NIST ACVP vectors on the
 device — every group defined for these parameter sets, including the FIPS 203

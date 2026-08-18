@@ -68,6 +68,8 @@ against the firmware via `tests/hostile_server_drill.py`.
 
 ## v2 — measurement
 
+Crypto-core figures are done: [benchmarks.md](benchmarks.md). Energy is not.
+
 Only now do numbers get produced, and the harness is built to earn them.
 
 Benchmarks of the crypto core run on a **radio-free build**: no Wi-Fi, no I2C, no
@@ -76,9 +78,11 @@ inside the measurement window and make a fluctuating number impossible to
 attribute. The protocol figures are measured separately, with the radio on, and
 reported as such.
 
-- Per operation: cycles for key generation, encapsulation, decapsulation; peak
-  stack via high-water marks; flash footprint
-- Classical baseline (X25519) and hybrid (X25519 + ML-KEM-768) on the same harness
+- ~~Per operation: cycles for key generation, encapsulation, decapsulation; peak
+  stack via high-water marks; flash footprint~~ **done**
+- Classical baseline (X25519) **done**; hybrid (X25519 + ML-KEM-768) not yet
+  wired into the protocol
+- ~~Repeated runs with reported spread~~ **done** — 50 runs, min/median/max
 - Mode A versus mode B in millijoules — the wall-clock delta is already measured
   (+200 ms device side, of which only 7.3 ms is the device's own extra
   cryptography), but wall clock is not energy
