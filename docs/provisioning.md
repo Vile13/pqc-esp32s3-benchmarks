@@ -66,9 +66,22 @@ who breaks ML-KEM still faces 256 bits of symmetric secret — but only if those
 256 bits are actually random. A hand-typed passphrase throws the property away
 while leaving the code looking identical.
 
-The same bytes have to be registered on the server for this `device_id`. The
-server's device table and its registration command arrive with the reference
-server; this document gets a section then.
+### Register the PSK with the server
+
+```bash
+python3 tools/register_device.py --host volker@192.168.188.53
+```
+
+This reads `device_id` and the PSK out of `device_config.h` and writes them into
+`~/pqc-server/devices.json` on the Pi, mode `0600`.
+
+The PSK is passed to the Pi on stdin of the ssh invocation. It is not put on a
+command line, where it would be visible in `ps` to every other user on the
+machine and would land in shell history on both ends, and it is not written to a
+temporary file. The tool prints only a truncated SHA-256 of it, which is enough
+to confirm both ends hold the same value without exposing it.
+
+Re-running the tool for an existing `device_id` replaces that entry.
 
 ## 3. Wi-Fi
 

@@ -1,0 +1,46 @@
+#!/bin/sh
+#
+# Refuse to commit real credentials that ended up in the template.
+#
+# device_config.h.example is tracked; device_config.h is not. Editing the wrong
+# one of those two is an easy mistake and a silent one - the file looks right,
+# the build works, and the secrets go to the remote.
+#
+# Enable with:  git config core.hooksPath .githooks
+
+set -e
+
+TEMPLATE="firmware/esp32s3-dut/main/device_config.h.example"
+
+if git diff --cached --name-only | grep -qx "$TEMPLATE"; then
+    staged=$(git show ":$TEMPLATE")
+
+    if ! printf '%s' "$staged" | grep -q "your-ssid-here"; then
+        echo "pre-commit: $TEMPLATE no longer contains the SSID placeholder."
+        echo ""
+        echo "  It looks like real credentials were typed into the template"
+        echo "  instead of into device_config.h (which is gitignored)."
+        echo ""
+        echo "  Fix:  cp $TEMPLATE firmware/esp32s3-dut/main/device_config.h"
+        echo "        git checkout -- $TEMPLATE"
+        echo ""
+        exit 1
+    fi
+
+    if printf '%s' "$staged" | grep -qE '0x[0-9a-f]{2}, 0x[0-9a-f]{2}' \
+       && ! printf '%s' "$staged" | grep -q "0x00, 0x00, 0x00, 0x00"; then
+        echo "pre-commit: $TEMPLATE contains non-zero key material. Refusing."
+        exit 1
+    fi
+fi
+
+# Belt and braces: these must never be tracked at all.
+for f in firmware/esp32s3-dut/main/device_config.h \
+         firmware/esp32s3-dut/main/server_key.h; do
+    if git diff --cached --name-only | grep -qx "$f"; then
+        echo "pre-commit: $f is deployment state and must not be committed."
+        exit 1
+    fi
+done
+
+exit 0
