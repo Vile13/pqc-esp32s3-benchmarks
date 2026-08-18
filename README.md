@@ -31,7 +31,8 @@ runtime, stack, flash, bytes on the wire, and energy per handshake.
 - ML-KEM-512 / ML-KEM-768 (FIPS 203) key establishment on ESP32-S3
 - Classical baseline (X25519) and hybrid (X25519 + ML-KEM-768) for comparison
 - Runtime, peak stack, heap, flash footprint, network volume, energy per handshake
-- A minimal documented handshake protocol, carrying real sensor data
+- A minimal documented handshake protocol ([spec](docs/protocol.md)), carrying
+  real sensor data
 - NIST Known Answer Tests against the reference implementation
 
 **Explicitly out of scope (for now)**

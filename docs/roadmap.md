@@ -38,6 +38,15 @@ or quietly processed. See [conformance.md](conformance.md).
 
 ### v1.1 — the handshake
 
+- Protocol specified before implementation: [protocol.md](protocol.md)
+- Transport is plain TCP, not MQTT. A handshake is request/response, MQTT is
+  publish/subscribe, and the broker would sit in the middle of the later
+  measurement path. Mosquitto, Node-RED and MariaDB are already running on the
+  Pi and get used in v3, where the finished session layer is embedded into that
+  stack.
+- The Pi's ML-KEM comes from **OpenSSL 3.5.6**, which supports it natively — an
+  implementation sharing no code with mlkem-native, so interoperability is real
+  evidence rather than a mirror.
 - Minimal documented protocol, ESP32-S3 to Raspberry Pi over Wi-Fi
 - HKDF-SHA-256 for key derivation, AES-256-GCM for the payload
 - Replay protection: session ID plus a monotonic sequence counter
